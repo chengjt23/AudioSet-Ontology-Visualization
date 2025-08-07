@@ -166,6 +166,7 @@
             border-radius: 10px;
             color: white;
             text-align: center;
+            font-size: 14px; /* Adjust font size for more info */
         }
 
         @keyframes fadeIn {
@@ -272,580 +273,514 @@
         </div>
     </div>
 
-    <script>
-        let ontologyData = [];
-        let nodeMap = {};
-        let rootNodes = [];
-        let expandedNodes = new Set(); // 跟踪展开的节点
-        let deleteHistory = []; // 删除操作历史
-        const MAX_HISTORY = 10; // 最大历史记录数量
+<script>
+    let originalOntologyData = [];
+    let originalNodeMap = {};
+    
+    let nodeMap = {}; 
+    let rootNodes = [];
+    
+    let expandedNodes = new Set();
+    let deleteHistory = [];
+    const MAX_HISTORY = 10;
 
-        function loadFromFile(file) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    ontologyData = JSON.parse(e.target.result);
-                    expandedNodes.clear(); // 重置展开状态
-                    deleteHistory = []; // 重置删除历史
-                    
-                    // 隐藏按钮直到成功构建树
-                    const saveBtn = document.getElementById('saveBtn');
-                    saveBtn.classList.add('hidden-btn');
-                    saveBtn.classList.remove('btn-slide-in');
-                    saveBtn.disabled = true;
-                    
-                    const loadStructureBtn = document.getElementById('loadStructureBtn');
-                    loadStructureBtn.classList.add('hidden-btn');
-                    loadStructureBtn.classList.remove('btn-slide-in');
-                    loadStructureBtn.disabled = true;
-                    
-                    const undoBtn = document.getElementById('undoBtn');
-                    undoBtn.classList.add('hidden-btn');
-                    undoBtn.classList.remove('btn-slide-in');
-                    undoBtn.disabled = true;
-                    
-                    buildTree();
-                } catch (error) {
-                    document.getElementById('treeContainer').innerHTML = 
-                        '<div style="text-align: center; color: #dc3545; padding: 20px;">' +
-                        '❌ 文件解析失败: ' + error.message +
-                        '</div>';
-                }
-            };
-            reader.readAsText(file);
-        }
-
-        function buildTree() {
-            if (!ontologyData || ontologyData.length === 0) {
-                document.getElementById('treeContainer').innerHTML = 
-                    '<div style="text-align: center; color: #dc3545; padding: 20px;">❌ 没有有效的数据</div>';
-                return;
-            }
-
-            ontologyData.forEach(node => {
-                nodeMap[node.id] = node;
-            });
-
-            const childrenSet = new Set();
-            ontologyData.forEach(node => {
-                if (node.child_ids) {
-                    node.child_ids.forEach(childId => {
-                        childrenSet.add(childId);
-                    });
-                }
-            });
-
-            rootNodes = ontologyData.filter(node => !childrenSet.has(node.id));
-
-            updateStats();
-
-            renderTree();
-            
-            // 同时显示并启用所有按钮，添加动画效果
-            const saveBtn = document.getElementById('saveBtn');
-            saveBtn.classList.remove('hidden-btn');
-            saveBtn.classList.add('btn-slide-in');
-            saveBtn.disabled = false;
-            
-            const loadStructureBtn = document.getElementById('loadStructureBtn');
-            loadStructureBtn.classList.remove('hidden-btn');
-            loadStructureBtn.classList.add('btn-slide-in');
-            loadStructureBtn.disabled = false;
-            
-            const undoBtn = document.getElementById('undoBtn');
-            undoBtn.classList.remove('hidden-btn');
-            undoBtn.classList.add('btn-slide-in');
-            updateUndoButton();
-        }
-
-        function loadStructureFromFile(file) {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    const structureData = JSON.parse(e.target.result);
-                    applyStructureState(structureData);
-                } catch (error) {
-                    alert('结构文件解析失败: ' + error.message);
-                }
-            };
-            reader.readAsText(file);
-        }
-
-        function applyStructureState(structureData) {
-            if (!Array.isArray(structureData) || structureData.length === 0) {
-                alert('无效的结构文件');
-                return;
-            }
-
-            // 清除当前展开状态
-            expandedNodes.clear();
-
-            // 分析结构文件中的节点关系
-            const structureNodeMap = {};
-            const structureChildrenMap = {};
-
-            structureData.forEach(node => {
-                structureNodeMap[node.id] = node;
-                if (node.child_ids && node.child_ids.length > 0) {
-                    structureChildrenMap[node.id] = node.child_ids;
-                }
-            });
-
-            // 找出需要展开的节点
-            // 如果一个节点在结构文件中有子节点，且这些子节点也在结构文件中，说明该节点应该展开
-            Object.keys(structureChildrenMap).forEach(nodeId => {
-                const childIds = structureChildrenMap[nodeId];
-                const hasVisibleChildren = childIds.some(childId => structureNodeMap[childId]);
+    function loadFromFile(file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                originalOntologyData = JSON.parse(e.target.result);
+                expandedNodes.clear();
+                deleteHistory = [];
                 
-                if (hasVisibleChildren && nodeMap[nodeId]) {
-                    expandedNodes.add(nodeId);
-                }
-            });
+                const saveBtn = document.getElementById('saveBtn');
+                saveBtn.classList.add('hidden-btn');
+                saveBtn.classList.remove('btn-slide-in');
+                
+                const loadStructureBtn = document.getElementById('loadStructureBtn');
+                loadStructureBtn.classList.add('hidden-btn');
+                loadStructureBtn.classList.remove('btn-slide-in');
 
-            // 重新渲染树以应用新的展开状态
-            renderTree();
+                const undoBtn = document.getElementById('undoBtn');
+                undoBtn.classList.add('hidden-btn');
+                undoBtn.classList.remove('btn-slide-in');
 
-            // 显示加载结果
-            const stats = document.getElementById('stats');
-            
-            // 更新统计信息
-            updateStats();
-            const updatedHtml = stats.innerHTML;
-            
-            // 显示简单的成功提示
-            stats.innerHTML = `
-                <span style="color: white;">✓ 加载成功</span>
-            `;
-            
-            setTimeout(() => {
-                stats.innerHTML = updatedHtml;
-            }, 1000);
+                buildTree();
+
+            } catch (error) {
+                document.getElementById('treeContainer').innerHTML =
+                    `<div style="text-align: center; color: #dc3545; padding: 20px;">
+                        ❌ 文件解析失败: ${error.message}
+                     </div>`;
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    function buildTree() {
+        if (!originalOntologyData || originalOntologyData.length === 0) {
+            document.getElementById('treeContainer').innerHTML = 
+                '<div style="text-align: center; color: #dc3545; padding: 20px;">❌ 没有有效的数据</div>';
+            return;
         }
 
-        function renderTree() {
-            const container = document.getElementById('treeContainer');
-            container.innerHTML = '';
-            
-            if (rootNodes.length === 0) {
-                container.innerHTML = '<div style="text-align: center; color: #dc3545; padding: 20px;">❌ 没有找到根节点</div>';
-                return;
+        nodeMap = {};
+        rootNodes = [];
+        originalNodeMap = {};
+
+        originalOntologyData.forEach(node => {
+            originalNodeMap[node.id] = node;
+        });
+
+        const childrenSet = new Set();
+        originalOntologyData.forEach(node => {
+            if (node.child_ids) {
+                node.child_ids.forEach(childId => childrenSet.add(childId));
             }
-            
-            rootNodes.forEach(node => {
-                const nodeElement = createNodeElement(node, 0, true); // 初始渲染使用动画
-                container.appendChild(nodeElement);
-            });
-        }
+        });
 
-        function createNodeElement(node, level = 0, animated = false) {
-            const nodeDiv = document.createElement('div');
-            nodeDiv.className = 'tree-node';
-            
-            if (animated) {
-                nodeDiv.classList.add('tree-node-animated');
-                nodeDiv.style.animationDelay = `${level * 0.1}s`;
-            }
+        const initialRootNodes = originalOntologyData.filter(node => !childrenSet.has(node.id));
 
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'node-content';
-            
-            const hasChildren = node.child_ids && node.child_ids.length > 0;
-            
-            const toggleIcon = document.createElement('div');
-            toggleIcon.className = `toggle-icon ${!hasChildren ? 'leaf' : ''}`;
-            toggleIcon.textContent = !hasChildren ? '●' : '+';
+        function createUniqueNode(originalNode, parentUniqueId) {
+            const uniqueId = parentUniqueId ? `${originalNode.id}__${parentUniqueId}` : originalNode.id;
+            if (nodeMap[uniqueId]) return nodeMap[uniqueId];
 
-            const nameSpan = document.createElement('span');
-            nameSpan.className = 'node-name';
-            nameSpan.textContent = node.name || '未命名';
-
-            const idSpan = document.createElement('span');
-            idSpan.className = 'node-id';
-            idSpan.textContent = node.id || '';
-
-            // 添加删除按钮
-            const deleteBtn = document.createElement('button');
-            deleteBtn.className = 'delete-btn';
-            deleteBtn.textContent = '×';
-            deleteBtn.title = '删除节点';
-            deleteBtn.onclick = (e) => {
-                e.stopPropagation();
-                deleteNode(node.id);
+            const uniqueNode = {
+                ...originalNode,
+                uniqueId: uniqueId,
+                parentUniqueId: parentUniqueId,
+                children: []
             };
+            nodeMap[uniqueId] = uniqueNode;
 
-            contentDiv.appendChild(toggleIcon);
-            contentDiv.appendChild(nameSpan);
-            contentDiv.appendChild(idSpan);
-            contentDiv.appendChild(deleteBtn);
+            if (originalNode.child_ids) {
+                originalNode.child_ids.forEach(childId => {
+                    const originalChildNode = originalNodeMap[childId];
+                    if (originalChildNode) {
+                        const childUniqueNode = createUniqueNode(originalChildNode, uniqueId);
+                        if (childUniqueNode) {
+                            uniqueNode.children.push(childUniqueNode);
+                        }
+                    }
+                });
+            }
+            return uniqueNode;
+        }
+        
+        initialRootNodes.forEach(root => {
+            const rootInstance = createUniqueNode(root, null);
+            rootNodes.push(rootInstance);
+        });
 
-            if (hasChildren) {
-                const childrenDiv = document.createElement('div');
-                childrenDiv.className = 'children';
+        updateStats();
+        renderTree();
 
-                // 如果节点之前是展开的，保持展开状态
-                if (expandedNodes.has(node.id)) {
-                    node.child_ids.forEach(childId => {
-                        const childNode = nodeMap[childId];
-                        if (childNode) {
+        const saveBtn = document.getElementById('saveBtn');
+        saveBtn.classList.remove('hidden-btn');
+        saveBtn.classList.add('btn-slide-in');
+        
+        const loadStructureBtn = document.getElementById('loadStructureBtn');
+        loadStructureBtn.classList.remove('hidden-btn');
+        loadStructureBtn.classList.add('btn-slide-in');
+        
+        const undoBtn = document.getElementById('undoBtn');
+        undoBtn.classList.remove('hidden-btn');
+        undoBtn.classList.add('btn-slide-in');
+        updateUndoButton();
+    }
+
+    function renderTree() {
+        const container = document.getElementById('treeContainer');
+        container.innerHTML = '';
+        if (rootNodes.length === 0) {
+            container.innerHTML = '<div style="text-align: center; color: #dc3545; padding: 20px;">❌ 没有找到根节点</div>';
+            return;
+        }
+        rootNodes.forEach(nodeInstance => {
+            const nodeElement = createNodeElement(nodeInstance, 0, true);
+            container.appendChild(nodeElement);
+        });
+    }
+
+    function createNodeElement(node, level = 0, animated = false) {
+        const nodeDiv = document.createElement('div');
+        nodeDiv.className = 'tree-node';
+        if (animated) {
+            nodeDiv.classList.add('tree-node-animated');
+            nodeDiv.style.animationDelay = `${level * 0.1}s`;
+        }
+
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'node-content';
+        
+        const hasChildren = node.children && node.children.length > 0;
+        
+        const toggleIcon = document.createElement('div');
+        toggleIcon.className = `toggle-icon ${!hasChildren ? 'leaf' : ''}`;
+        toggleIcon.textContent = !hasChildren ? '●' : '+';
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'node-name';
+        nameSpan.textContent = node.name || '未命名';
+
+        const idSpan = document.createElement('span');
+        idSpan.className = 'node-id';
+        idSpan.textContent = node.id || '';
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-btn';
+        deleteBtn.textContent = '×';
+        deleteBtn.title = '删除节点';
+        deleteBtn.onclick = (e) => {
+            e.stopPropagation();
+            deleteNode(node.uniqueId);
+        };
+
+        contentDiv.appendChild(toggleIcon);
+        contentDiv.appendChild(nameSpan);
+        contentDiv.appendChild(idSpan);
+        contentDiv.appendChild(deleteBtn);
+
+        if (hasChildren) {
+            const childrenDiv = document.createElement('div');
+            childrenDiv.className = 'children';
+
+            if (expandedNodes.has(node.uniqueId)) {
+                node.children.forEach(childNode => {
+                    const childElement = createNodeElement(childNode, level + 1, false);
+                    childrenDiv.appendChild(childElement);
+                });
+                childrenDiv.classList.add('expanded');
+                toggleIcon.classList.add('expanded');
+                toggleIcon.textContent = '−';
+            }
+
+            contentDiv.addEventListener('click', () => {
+                const isExpanded = childrenDiv.classList.contains('expanded');
+                
+                if (!isExpanded) {
+                    if (childrenDiv.children.length === 0) {
+                        node.children.forEach(childNode => {
                             const childElement = createNodeElement(childNode, level + 1, false);
                             childrenDiv.appendChild(childElement);
-                        }
-                    });
-                    childrenDiv.classList.add('expanded');
+                        });
+                    }
+                    childrenDiv.classList.remove('collapsing');
+                    childrenDiv.classList.add('expanding', 'expanded');
                     toggleIcon.classList.add('expanded');
                     toggleIcon.textContent = '−';
+                    expandedNodes.add(node.uniqueId);
+                } else {
+                    childrenDiv.classList.remove('expanded', 'expanding');
+                    childrenDiv.classList.add('collapsing');
+                    toggleIcon.classList.remove('expanded');
+                    toggleIcon.textContent = '+';
+                    expandedNodes.delete(node.uniqueId);
+                    setTimeout(() => childrenDiv.classList.remove('collapsing'), 50);
                 }
+                updateStats();
+            });
 
-                contentDiv.addEventListener('click', () => {
-                    const isExpanded = childrenDiv.classList.contains('expanded');
-                    
-                    if (!isExpanded) {
-                        if (childrenDiv.children.length === 0) {
-                            node.child_ids.forEach(childId => {
-                                const childNode = nodeMap[childId];
-                                if (childNode) {
-                                    const childElement = createNodeElement(childNode, level + 1, false);
-                                    childrenDiv.appendChild(childElement);
-                                }
-                            });
-                        }
-                        
-                        // 清除所有动画类
-                        childrenDiv.classList.remove('collapsing');
-                        // 使用展开动画
-                        childrenDiv.classList.add('expanding');
-                        childrenDiv.classList.add('expanded');
-                        
-                        toggleIcon.classList.add('expanded');
-                        toggleIcon.textContent = '−';
-                        expandedNodes.add(node.id);
-                    } else {
-                        // 折叠逻辑 - 立即折叠
-                        childrenDiv.classList.remove('expanded', 'expanding');
-                        childrenDiv.classList.add('collapsing');
-                        
-                        toggleIcon.classList.remove('expanded');
-                        toggleIcon.textContent = '+';
-                        expandedNodes.delete(node.id);
-                        
-                        // 短暂延迟后移除collapsing类，避免影响下次展开
-                        setTimeout(() => {
-                            childrenDiv.classList.remove('collapsing');
-                        }, 50);
+            nodeDiv.appendChild(contentDiv);
+            nodeDiv.appendChild(childrenDiv);
+        } else {
+            nodeDiv.appendChild(contentDiv);
+        }
+
+        return nodeDiv;
+    }
+
+    function getVisibleNodes() {
+        const visibleNodeIds = new Set();
+        function traverse(nodes) {
+            nodes.forEach(node => {
+                visibleNodeIds.add(node.uniqueId);
+                if (expandedNodes.has(node.uniqueId) && node.children) {
+                    traverse(node.children);
+                }
+            });
+        }
+        traverse(rootNodes);
+        return visibleNodeIds;
+    }
+    
+    // Helper function to get all uniqueIds of nodes currently acting as leaves
+    function getVisibleLeafNodeUniqueIds() {
+        const allVisibleUniqueIds = getVisibleNodes();
+        const leafUniqueIds = new Set();
+
+        allVisibleUniqueIds.forEach(uniqueId => {
+            const node = nodeMap[uniqueId];
+            if (node) {
+                // A leaf is a node that either has no children or is currently collapsed.
+                const isExpanded = expandedNodes.has(uniqueId);
+                const hasChildren = node.children && node.children.length > 0;
+                
+                if (!hasChildren || !isExpanded) {
+                    leafUniqueIds.add(uniqueId);
+                }
+            }
+        });
+        return leafUniqueIds;
+    }
+    
+    // --- NEW: Function to get the deduplicated count of visible leaf nodes ---
+    function getDeduplicatedLeafNodeCount() {
+        const leafInstances = getVisibleLeafNodeUniqueIds();
+        const uniqueOriginalIds = new Set();
+        leafInstances.forEach(uniqueId => {
+            const node = nodeMap[uniqueId];
+            if (node) {
+                uniqueOriginalIds.add(node.id); // The Set handles deduplication
+            }
+        });
+        return uniqueOriginalIds.size;
+    }
+
+    // --- MAJOR CHANGE: updateStats now includes the new metric ---
+    function updateStats() {
+        const visibleNodeIds = getVisibleNodes();
+        const leafNodeCount = getVisibleLeafNodeUniqueIds().size;
+        const deduplicatedLeafCount = getDeduplicatedLeafNodeCount(); // New calculation
+        
+        const stats = document.getElementById('stats');
+        const totalOriginalNodes = originalOntologyData.length;
+        const totalOriginalLeafNodes = originalOntologyData.filter(n => !n.child_ids || n.child_ids.length === 0).length;
+        
+        stats.innerHTML = `
+            <strong>总节点数:</strong> ${totalOriginalNodes} | 
+            <strong>总叶节点数:</strong> ${totalOriginalLeafNodes} | 
+            <strong>根节点数:</strong> ${rootNodes.length} <br>
+            <strong>当前可见节点:</strong> ${visibleNodeIds.size} | 
+            <strong>当前叶节点:</strong> ${leafNodeCount} |
+            <strong>去重后的叶节点数:</strong> ${deduplicatedLeafCount}
+        `;
+    }
+
+    function generateMergedOntology() {
+        const visibleUniqueIds = getVisibleNodes();
+        const mergedData = [];
+        const processedOriginalIds = new Set();
+        const finalNodeMap = {};
+
+        visibleUniqueIds.forEach(uniqueId => {
+            const uniqueNode = nodeMap[uniqueId];
+            if (uniqueNode && !processedOriginalIds.has(uniqueNode.id)) {
+                const newNode = {
+                    id: uniqueNode.id,
+                    name: uniqueNode.name,
+                    description: uniqueNode.description || "",
+                    citation_uri: uniqueNode.citation_uri || "",
+                    positive_examples: uniqueNode.positive_examples || [],
+                    restrictions: uniqueNode.restrictions || [],
+                    child_ids: []
+                };
+                mergedData.push(newNode);
+                finalNodeMap[uniqueNode.id] = newNode;
+                processedOriginalIds.add(uniqueNode.id);
+            }
+        });
+
+        visibleUniqueIds.forEach(uniqueId => {
+            const uniqueNode = nodeMap[uniqueId];
+            if (uniqueNode && uniqueNode.parentUniqueId) {
+                const parentNode = nodeMap[uniqueNode.parentUniqueId];
+                if (parentNode && visibleUniqueIds.has(parentNode.uniqueId)) {
+                    const finalParent = finalNodeMap[parentNode.id];
+                    if (finalParent && !finalParent.child_ids.includes(uniqueNode.id)) {
+                        finalParent.child_ids.push(uniqueNode.id);
                     }
-                    
-                    // 动态更新统计信息
-                    updateStats();
-                });
+                }
+            }
+        });
 
-                nodeDiv.appendChild(contentDiv);
-                nodeDiv.appendChild(childrenDiv);
+        return mergedData;
+    }
+
+    function downloadFile(content, filename) {
+        const blob = new Blob([content], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    function saveTreeState() {
+        const mergedOntology = generateMergedOntology();
+        if (mergedOntology.length === 0) {
+            alert('没有可见的节点可以保存');
+            return;
+        }
+
+        const content = JSON.stringify(mergedOntology, null, 2);
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const filename = `merged_ontology_${timestamp}.json`;
+        
+        const stats = document.getElementById('stats');
+        updateStats(); // Ensure stats are fresh before capturing
+        const updatedHtml = stats.innerHTML;
+        
+        stats.innerHTML = `
+            <strong>正在保存...</strong> 可见节点数: ${getVisibleNodes().size} | 
+            文件名: ${filename}
+        `;
+        
+        setTimeout(() => {
+            downloadFile(content, filename);
+            stats.innerHTML = updatedHtml;
+        }, 500);
+    }
+
+    function deleteNode(uniqueId) {
+        const nodeToDelete = nodeMap[uniqueId];
+        if (!nodeToDelete) return;
+
+        if (!confirm(`确定要删除节点 "${nodeToDelete.name}" 及其所有子节点吗？`)) return;
+
+        const parentNode = nodeToDelete.parentUniqueId ? nodeMap[nodeToDelete.parentUniqueId] : null;
+        let originalIndex = -1;
+        if (parentNode) {
+            originalIndex = parentNode.children.findIndex(child => child.uniqueId === uniqueId);
+            parentNode.children.splice(originalIndex, 1);
+        } else {
+            originalIndex = rootNodes.findIndex(root => root.uniqueId === uniqueId);
+            if(originalIndex > -1) rootNodes.splice(originalIndex, 1);
+        }
+
+        const nodesToPurge = new Map();
+        function collectDescendants(node) {
+            nodesToPurge.set(node.uniqueId, node);
+            if (node.children) {
+                node.children.forEach(collectDescendants);
+            }
+        }
+        collectDescendants(nodeToDelete);
+
+        deleteHistory.push({
+            node: nodeToDelete,
+            parentNode: parentNode,
+            index: originalIndex,
+            purgedNodes: nodesToPurge,
+            timestamp: Date.now()
+        });
+        if (deleteHistory.length > MAX_HISTORY) deleteHistory.shift();
+
+        nodesToPurge.forEach((node, id) => {
+            delete nodeMap[id];
+            expandedNodes.delete(id);
+        });
+
+        renderTree();
+        updateStats();
+        updateUndoButton();
+    }
+
+    function undoDelete() {
+        if (deleteHistory.length === 0) return;
+        const lastDelete = deleteHistory.pop();
+        const { node, parentNode, index, purgedNodes } = lastDelete;
+
+        purgedNodes.forEach((n, id) => {
+            nodeMap[id] = n;
+        });
+
+        if (parentNode) {
+            if (nodeMap[parentNode.uniqueId]) {
+                 parentNode.children.splice(index, 0, node);
             } else {
-                nodeDiv.appendChild(contentDiv);
+                 rootNodes.push(node);
             }
-
-            return nodeDiv;
+        } else {
+            rootNodes.splice(index, 0, node);
         }
 
-        function getVisibleNodes() {
-            const visibleNodes = new Set();
-            const processedNodes = new Set();
+        renderTree();
+        updateStats();
+        updateUndoButton();
+    }
+    
+    function updateUndoButton() {
+        const undoBtn = document.getElementById('undoBtn');
+        if (deleteHistory.length > 0) {
+            undoBtn.disabled = false;
+            undoBtn.textContent = `撤回删除 (${deleteHistory.length})`;
+        } else {
+            undoBtn.disabled = true;
+            undoBtn.textContent = '撤回删除';
+        }
+    }
+    
+    document.getElementById('loadBtn').addEventListener('click', () => {
+        document.getElementById('fileInput').click();
+    });
+    
+    document.getElementById('fileInput').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            document.getElementById('treeContainer').innerHTML = '<div class="loading">正在加载文件...</div>';
+            loadFromFile(file);
+        }
+    });
 
-            function addVisibleNode(nodeId) {
-                if (processedNodes.has(nodeId)) return;
-                processedNodes.add(nodeId);
+    document.getElementById('loadStructureBtn').addEventListener('click', () => {
+        document.getElementById('structureInput').click();
+    });
 
-                const node = nodeMap[nodeId];
-                if (!node) return;
+    document.getElementById('structureInput').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            document.getElementById('treeContainer').innerHTML = '<div class="loading">正在加载结构状态...</div>';
+            loadStructureFromFile(file);
+        }
+    });
 
-                visibleNodes.add(nodeId);
-
-                // 如果节点是展开的，添加其子节点
-                if (expandedNodes.has(nodeId) && node.child_ids) {
-                    node.child_ids.forEach(childId => {
-                        addVisibleNode(childId);
-                    });
-                }
+    function loadStructureFromFile(file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            try {
+                const structureData = JSON.parse(e.target.result);
+                applyStructureState(structureData);
+            } catch (error) {
+                alert('结构文件解析失败: ' + error.message);
             }
-
-            // 从根节点开始
-            rootNodes.forEach(rootNode => {
-                addVisibleNode(rootNode.id);
-            });
-
-            return visibleNodes;
+        };
+        reader.readAsText(file);
+    }
+    
+    function applyStructureState(structureData) {
+        if (!Array.isArray(structureData) || structureData.length === 0) {
+            alert('无效的结构文件');
+            return;
         }
+        expandedNodes.clear();
 
-        function getVisibleLeafNodes() {
-            const visibleNodeIds = getVisibleNodes();
-            let leafCount = 0;
-
-            visibleNodeIds.forEach(nodeId => {
-                const node = nodeMap[nodeId];
-                if (node) {
-                    // 叶节点定义：在当前可视状态下没有可见的子节点
-                    const hasVisibleChildren = expandedNodes.has(nodeId) && 
-                                               node.child_ids && 
-                                               node.child_ids.some(childId => visibleNodeIds.has(childId));
-                    
-                    if (!hasVisibleChildren) {
-                        leafCount++;
-                    }
-                }
-            });
-
-            return leafCount;
-        }
-
-        function updateStats() {
-            const visibleNodeIds = getVisibleNodes();
-            const leafNodeCount = getVisibleLeafNodes();
-            
-            const stats = document.getElementById('stats');
-            stats.innerHTML = `
-                <strong>总节点数:</strong> ${ontologyData.length} | 
-                <strong>总叶节点数:</strong> ${ontologyData.filter(n => !n.child_ids || n.child_ids.length === 0).length} | 
-                <strong>根节点数:</strong> ${rootNodes.length} | 
-                <strong>当前可见节点:</strong> ${visibleNodeIds.size} | 
-                <strong>当前叶节点:</strong> ${leafNodeCount}
-            `;
-        }
-
-        function generateMergedOntology() {
-            const visibleNodeIds = getVisibleNodes();
-            const mergedData = [];
-
-            visibleNodeIds.forEach(nodeId => {
-                const originalNode = nodeMap[nodeId];
-                if (originalNode) {
-                    // 创建节点副本
-                    const newNode = {
-                        id: originalNode.id,
-                        name: originalNode.name,
-                        description: originalNode.description || "",
-                        citation_uri: originalNode.citation_uri || "",
-                        positive_examples: originalNode.positive_examples || [],
-                        restrictions: originalNode.restrictions || []
-                    };
-
-                    // 只包含可视的子节点
-                    if (originalNode.child_ids) {
-                        newNode.child_ids = originalNode.child_ids.filter(childId => 
-                            visibleNodeIds.has(childId)
-                        );
-                    } else {
-                        newNode.child_ids = [];
-                    }
-
-                    mergedData.push(newNode);
-                }
-            });
-
-            return mergedData;
-        }
-
-        function downloadFile(content, filename) {
-            const blob = new Blob([content], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }
-
-        function saveTreeState() {
-            const mergedOntology = generateMergedOntology();
-            const visibleNodeIds = getVisibleNodes();
-            
-            if (mergedOntology.length === 0) {
-                alert('没有可见的节点可以保存');
-                return;
-            }
-
-            const content = JSON.stringify(mergedOntology, null, 2);
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            const filename = `merged_ontology_${timestamp}.json`;
-            
-            // 显示保存信息
-            const stats = document.getElementById('stats');
-            const originalHtml = stats.innerHTML;
-            
-            // 确保统计信息是最新的
-            updateStats();
-            const updatedHtml = stats.innerHTML;
-            
-            // 显示临时保存信息
-            stats.innerHTML = `
-                <strong>正在保存...</strong> 可见节点数: ${visibleNodeIds.size} | 
-                文件名: ${filename}
-            `;
-            
-            setTimeout(() => {
-                downloadFile(content, filename);
-                stats.innerHTML = updatedHtml;
-            }, 500);
-        }
-
-        document.getElementById('loadBtn').addEventListener('click', () => {
-            document.getElementById('fileInput').click();
-        });
-        
-        document.getElementById('fileInput').addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                document.getElementById('treeContainer').innerHTML = '<div class="loading">正在加载文件...</div>';
-                loadFromFile(file);
+        const parentIdsInStructure = new Set();
+        structureData.forEach(node => {
+            if (node.child_ids && node.child_ids.length > 0) {
+                parentIdsInStructure.add(node.id);
             }
         });
 
-        document.getElementById('loadStructureBtn').addEventListener('click', () => {
-            document.getElementById('structureInput').click();
-        });
-
-        document.getElementById('structureInput').addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                document.getElementById('treeContainer').innerHTML = '<div class="loading">正在加载结构状态...</div>';
-                loadStructureFromFile(file);
+        Object.values(nodeMap).forEach(uniqueNode => {
+            if (parentIdsInStructure.has(uniqueNode.id)) {
+                expandedNodes.add(uniqueNode.uniqueId);
             }
         });
 
-        // 删除节点功能
-        function deleteNode(nodeId) {
-            const node = nodeMap[nodeId];
-            if (!node) return;
-            
-            // 确认删除
-            const confirmMessage = `确定要删除节点 "${node.name}" 及其所有子节点吗？`;
-            if (!confirm(confirmMessage)) return;
-            
-            // 收集要删除的所有节点（包括子节点）
-            const nodesToDelete = new Set();
-            const collectNodes = (id) => {
-                if (nodesToDelete.has(id)) return;
-                nodesToDelete.add(id);
-                const currentNode = nodeMap[id];
-                if (currentNode && currentNode.child_ids) {
-                    currentNode.child_ids.forEach(childId => collectNodes(childId));
-                }
-            };
-            collectNodes(nodeId);
-            
-            // 保存删除操作到历史记录
-            const deletedNodes = [];
-            const deletedExpandedNodes = new Set();
-            
-            nodesToDelete.forEach(id => {
-                const nodeToDelete = nodeMap[id];
-                if (nodeToDelete) {
-                    deletedNodes.push(JSON.parse(JSON.stringify(nodeToDelete)));
-                    if (expandedNodes.has(id)) {
-                        deletedExpandedNodes.add(id);
-                    }
-                }
-            });
-            
-            // 记录父节点信息
-            const parentUpdates = [];
-            ontologyData.forEach(parentNode => {
-                if (parentNode.child_ids && parentNode.child_ids.includes(nodeId)) {
-                    parentUpdates.push({
-                        parentId: parentNode.id,
-                        originalChildIds: [...parentNode.child_ids]
-                    });
-                }
-            });
-            
-            // 添加到删除历史
-            deleteHistory.push({
-                deletedNodes,
-                deletedExpandedNodes,
-                parentUpdates,
-                timestamp: Date.now()
-            });
-            
-            // 限制历史记录数量
-            if (deleteHistory.length > MAX_HISTORY) {
-                deleteHistory.shift();
-            }
-            
-            // 执行删除
-            // 1. 从ontologyData中移除节点
-            ontologyData = ontologyData.filter(n => !nodesToDelete.has(n.id));
-            
-            // 2. 从nodeMap中移除节点
-            nodesToDelete.forEach(id => {
-                delete nodeMap[id];
-                expandedNodes.delete(id);
-            });
-            
-            // 3. 从父节点的child_ids中移除引用
-            ontologyData.forEach(parentNode => {
-                if (parentNode.child_ids) {
-                    parentNode.child_ids = parentNode.child_ids.filter(id => !nodesToDelete.has(id));
-                }
-            });
-            
-            // 4. 更新根节点列表
-            rootNodes = rootNodes.filter(rootNode => !nodesToDelete.has(rootNode.id));
-            
-            // 5. 重新渲染树和更新统计
-            renderTree();
-            updateStats();
-            updateUndoButton();
-        }
-        
-        // 撤回删除功能
-        function undoDelete() {
-            if (deleteHistory.length === 0) return;
-            
-            const lastDelete = deleteHistory.pop();
-            
-            // 恢复删除的节点到ontologyData
-            lastDelete.deletedNodes.forEach(node => {
-                ontologyData.push(node);
-                nodeMap[node.id] = node;
-            });
-            
-            // 恢复父节点的child_ids
-            lastDelete.parentUpdates.forEach(update => {
-                const parentNode = nodeMap[update.parentId];
-                if (parentNode) {
-                    parentNode.child_ids = update.originalChildIds;
-                }
-            });
-            
-            // 恢复展开状态
-            lastDelete.deletedExpandedNodes.forEach(nodeId => {
-                expandedNodes.add(nodeId);
-            });
-            
-            // 重新构建根节点列表
-            buildTree();
-            
-            // 重新渲染和更新统计
-            renderTree();
-            updateStats();
-            updateUndoButton();
-        }
-        
-        // 更新撤回按钮状态
-        function updateUndoButton() {
-            const undoBtn = document.getElementById('undoBtn');
-            if (deleteHistory.length > 0) {
-                undoBtn.disabled = false;
-                undoBtn.textContent = `撤回删除 (${deleteHistory.length})`;
-            } else {
-                undoBtn.disabled = true;
-                undoBtn.textContent = '撤回删除';
-            }
-        }
-        
-        document.getElementById('undoBtn').addEventListener('click', undoDelete);
-        document.getElementById('saveBtn').addEventListener('click', saveTreeState);
-    </script>
+        renderTree();
+        const stats = document.getElementById('stats');
+        updateStats();
+        const updatedHtml = stats.innerHTML;
+        stats.innerHTML = `<span style="color: white;">✓ 结构加载成功</span>`;
+        setTimeout(() => { stats.innerHTML = updatedHtml; }, 1500);
+    }
+
+    document.getElementById('undoBtn').addEventListener('click', undoDelete);
+    document.getElementById('saveBtn').addEventListener('click', saveTreeState);
+</script>
+
 </body>
 </html>
