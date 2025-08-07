@@ -197,6 +197,53 @@
         .hidden-btn {
             display: none;
         }
+
+        .undo-btn {
+            padding: 10px 20px;
+            background: #ffc107;
+            color: #212529;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-right: 10px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .undo-btn:hover {
+            background: #e0a800;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(255, 193, 7, 0.3);
+        }
+
+        .undo-btn:disabled {
+            background: #6c757d;
+            color: #adb5bd;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .delete-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-left: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+
+        .delete-btn:hover {
+            background: #c82333;
+            transform: scale(1.1);
+        }
     </style>
 </head>
 <body>
@@ -215,6 +262,7 @@
             <button id="loadBtn" style="padding: 10px 20px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; margin-right: 10px;">选择 ontology.json 文件</button>
             <button id="loadStructureBtn" class="hidden-btn" style="padding: 10px 20px; background: #6f42c1; color: white; border: none; border-radius: 5px; cursor: pointer; margin-right: 10px;">加载合并后ontology文件</button>
             <button id="saveBtn" class="hidden-btn" style="padding: 10px 20px; background: #28a745; color: white; border: none; border-radius: 5px; cursor: pointer;">保存合并后的树</button>
+            <button id="undoBtn" class="undo-btn hidden-btn" disabled>撤回删除 (0)</button>
         </div>
 
         <div class="tree-container">
@@ -229,6 +277,8 @@
         let nodeMap = {};
         let rootNodes = [];
         let expandedNodes = new Set(); // 跟踪展开的节点
+        let deleteHistory = []; // 删除操作历史
+        const MAX_HISTORY = 10; // 最大历史记录数量
 
         function loadFromFile(file) {
             const reader = new FileReader();
@@ -236,6 +286,7 @@
                 try {
                     ontologyData = JSON.parse(e.target.result);
                     expandedNodes.clear(); // 重置展开状态
+                    deleteHistory = []; // 重置删除历史
                     
                     // 隐藏按钮直到成功构建树
                     const saveBtn = document.getElementById('saveBtn');
@@ -247,6 +298,11 @@
                     loadStructureBtn.classList.add('hidden-btn');
                     loadStructureBtn.classList.remove('btn-slide-in');
                     loadStructureBtn.disabled = true;
+                    
+                    const undoBtn = document.getElementById('undoBtn');
+                    undoBtn.classList.add('hidden-btn');
+                    undoBtn.classList.remove('btn-slide-in');
+                    undoBtn.disabled = true;
                     
                     buildTree();
                 } catch (error) {
@@ -285,7 +341,7 @@
 
             renderTree();
             
-            // 同时显示并启用两个按钮，添加动画效果
+            // 同时显示并启用所有按钮，添加动画效果
             const saveBtn = document.getElementById('saveBtn');
             saveBtn.classList.remove('hidden-btn');
             saveBtn.classList.add('btn-slide-in');
@@ -295,6 +351,11 @@
             loadStructureBtn.classList.remove('hidden-btn');
             loadStructureBtn.classList.add('btn-slide-in');
             loadStructureBtn.disabled = false;
+            
+            const undoBtn = document.getElementById('undoBtn');
+            undoBtn.classList.remove('hidden-btn');
+            undoBtn.classList.add('btn-slide-in');
+            updateUndoButton();
         }
 
         function loadStructureFromFile(file) {
@@ -402,9 +463,20 @@
             idSpan.className = 'node-id';
             idSpan.textContent = node.id || '';
 
+            // 添加删除按钮
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'delete-btn';
+            deleteBtn.textContent = '×';
+            deleteBtn.title = '删除节点';
+            deleteBtn.onclick = (e) => {
+                e.stopPropagation();
+                deleteNode(node.id);
+            };
+
             contentDiv.appendChild(toggleIcon);
             contentDiv.appendChild(nameSpan);
             contentDiv.appendChild(idSpan);
+            contentDiv.appendChild(deleteBtn);
 
             if (hasChildren) {
                 const childrenDiv = document.createElement('div');
@@ -641,7 +713,139 @@
             }
         });
 
+        // 删除节点功能
+        function deleteNode(nodeId) {
+            const node = nodeMap[nodeId];
+            if (!node) return;
+            
+            // 确认删除
+            const confirmMessage = `确定要删除节点 "${node.name}" 及其所有子节点吗？`;
+            if (!confirm(confirmMessage)) return;
+            
+            // 收集要删除的所有节点（包括子节点）
+            const nodesToDelete = new Set();
+            const collectNodes = (id) => {
+                if (nodesToDelete.has(id)) return;
+                nodesToDelete.add(id);
+                const currentNode = nodeMap[id];
+                if (currentNode && currentNode.child_ids) {
+                    currentNode.child_ids.forEach(childId => collectNodes(childId));
+                }
+            };
+            collectNodes(nodeId);
+            
+            // 保存删除操作到历史记录
+            const deletedNodes = [];
+            const deletedExpandedNodes = new Set();
+            
+            nodesToDelete.forEach(id => {
+                const nodeToDelete = nodeMap[id];
+                if (nodeToDelete) {
+                    deletedNodes.push(JSON.parse(JSON.stringify(nodeToDelete)));
+                    if (expandedNodes.has(id)) {
+                        deletedExpandedNodes.add(id);
+                    }
+                }
+            });
+            
+            // 记录父节点信息
+            const parentUpdates = [];
+            ontologyData.forEach(parentNode => {
+                if (parentNode.child_ids && parentNode.child_ids.includes(nodeId)) {
+                    parentUpdates.push({
+                        parentId: parentNode.id,
+                        originalChildIds: [...parentNode.child_ids]
+                    });
+                }
+            });
+            
+            // 添加到删除历史
+            deleteHistory.push({
+                deletedNodes,
+                deletedExpandedNodes,
+                parentUpdates,
+                timestamp: Date.now()
+            });
+            
+            // 限制历史记录数量
+            if (deleteHistory.length > MAX_HISTORY) {
+                deleteHistory.shift();
+            }
+            
+            // 执行删除
+            // 1. 从ontologyData中移除节点
+            ontologyData = ontologyData.filter(n => !nodesToDelete.has(n.id));
+            
+            // 2. 从nodeMap中移除节点
+            nodesToDelete.forEach(id => {
+                delete nodeMap[id];
+                expandedNodes.delete(id);
+            });
+            
+            // 3. 从父节点的child_ids中移除引用
+            ontologyData.forEach(parentNode => {
+                if (parentNode.child_ids) {
+                    parentNode.child_ids = parentNode.child_ids.filter(id => !nodesToDelete.has(id));
+                }
+            });
+            
+            // 4. 更新根节点列表
+            rootNodes = rootNodes.filter(rootNode => !nodesToDelete.has(rootNode.id));
+            
+            // 5. 重新渲染树和更新统计
+            renderTree();
+            updateStats();
+            updateUndoButton();
+        }
+        
+        // 撤回删除功能
+        function undoDelete() {
+            if (deleteHistory.length === 0) return;
+            
+            const lastDelete = deleteHistory.pop();
+            
+            // 恢复删除的节点到ontologyData
+            lastDelete.deletedNodes.forEach(node => {
+                ontologyData.push(node);
+                nodeMap[node.id] = node;
+            });
+            
+            // 恢复父节点的child_ids
+            lastDelete.parentUpdates.forEach(update => {
+                const parentNode = nodeMap[update.parentId];
+                if (parentNode) {
+                    parentNode.child_ids = update.originalChildIds;
+                }
+            });
+            
+            // 恢复展开状态
+            lastDelete.deletedExpandedNodes.forEach(nodeId => {
+                expandedNodes.add(nodeId);
+            });
+            
+            // 重新构建根节点列表
+            buildTree();
+            
+            // 重新渲染和更新统计
+            renderTree();
+            updateStats();
+            updateUndoButton();
+        }
+        
+        // 更新撤回按钮状态
+        function updateUndoButton() {
+            const undoBtn = document.getElementById('undoBtn');
+            if (deleteHistory.length > 0) {
+                undoBtn.disabled = false;
+                undoBtn.textContent = `撤回删除 (${deleteHistory.length})`;
+            } else {
+                undoBtn.disabled = true;
+                undoBtn.textContent = '撤回删除';
+            }
+        }
+        
+        document.getElementById('undoBtn').addEventListener('click', undoDelete);
         document.getElementById('saveBtn').addEventListener('click', saveTreeState);
     </script>
 </body>
-</html> 
+</html>
